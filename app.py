@@ -31,7 +31,7 @@ if uploaded_file:
             master_names = df['name'].tolist()
 
             # Perform fuzzy matching
-            top_matches = process.extract(new_name, master_names, scorer=fuzz.token_sort_ratio, limit=5)
+            top_matches = process.extract(new_name, master_names, scorer=fuzz.partial_ratio, limit=5)
 
             # Display the results
             st.write("Top 5 matches:")
