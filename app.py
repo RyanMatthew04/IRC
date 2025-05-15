@@ -2,39 +2,66 @@ import streamlit as st
 import pandas as pd
 from fuzzywuzzy import process, fuzz
 
-# Streamlit App Layout
-st.title("Testing Name Match Logic")
+st.title("Testing Name Match logic")
 
-# File Upload: Upload dataset with "name" column
-uploaded_file = st.file_uploader("Upload your dataset (CSV)", type=["csv", "xlsx"])
+master_file = st.file_uploader("Upload Master Dataset", type=["csv", "xlsx"], key="master")
+test_file = st.file_uploader("Upload Test Dataset", type=["csv", "xlsx"], key="test")
 
-if uploaded_file:
-    # Read the dataset
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
+if master_file and test_file:
+    def load_file(file):
+        return pd.read_csv(file) if file.name.endswith(".csv") else pd.read_excel(file)
+
+    master_df = load_file(master_file)
+    test_df = load_file(test_file)
+
+    if 'Master_Code' not in master_df.columns or 'Master_Name' not in master_df.columns:
+        st.error("Master dataset must contain 'Master_Code' and 'Master_Name' columns.")
+    elif 'Buyer_Name' not in test_df.columns:
+        st.error("Test dataset must contain 'Buyer_Name' column.")
     else:
-        df = pd.read_excel(uploaded_file)
-    
-    # Ensure the dataset has a 'name' column
-    if 'name' not in df.columns:
-        st.error("Dataset must contain a 'name' column.")
-    else:
-        # Display the dataset
-        st.write("Dataset Preview:")
-        st.write(df.head())
+        st.success("Both files loaded successfully.")
 
-        # Text Input for company name to match
-        new_name = st.text_input("Enter the company name to match:")
+        master_df['Master_Name_Lower'] = master_df['Master_Name'].str.lower().str.strip()
+        test_df['Buyer_Name_Lower'] = test_df['Buyer_Name'].str.lower().str.strip()
 
-        if new_name:
-            # Get list of company names
-            master_names = df['name'].tolist()
+        buyer_codes = []
+        updated_buyer_names = []
 
-            # Perform fuzzy matching
-            top_matches = process.extract(new_name, master_names, scorer=fuzz.partial_ratio, limit=10)
+        st.subheader("Manually Select The Company Names")
 
-            # Display the results
-            st.write("Top 10 matches:")
-            for match, score in top_matches:
-                st.write(f"{match}")
+        for i, buyer_name in enumerate(test_df['Buyer_Name_Lower']):
+            if buyer_name in master_df['Master_Name_Lower'].values:
+                # Exact match
+                matched_row = master_df.loc[master_df['Master_Name_Lower'] == buyer_name].iloc[0]
+                buyer_codes.append(matched_row['Master_Code'])
+                updated_buyer_names.append(matched_row['Master_Name'])  # Optional: unify names
+            else:
+                # Fuzzy match
+                master_names = master_df['Master_Name_Lower'].tolist()
+                matches = process.extract(buyer_name, master_names, scorer=fuzz.partial_ratio, limit=5)
 
+                # Get readable match names
+                match_display = [master_df.loc[master_df['Master_Name_Lower'] == m[0], 'Master_Name'].values[0] for m in matches]
+
+                selected = st.selectbox(f"Select closest match for '{test_df['Buyer_Name'].iloc[i]}'", match_display, key=i)
+
+                selected_row = master_df.loc[master_df['Master_Name'] == selected].iloc[0]
+                buyer_codes.append(selected_row['Master_Code'])
+                updated_buyer_names.append(selected_row['Master_Name'])  
+
+        # Insert Buyer_Code column before Buyer_Name
+        insert_pos = test_df.columns.get_loc('Buyer_Name')
+        test_df.insert(insert_pos, 'Buyer_Code', buyer_codes)
+
+        # Update Buyer_Name with selected names
+        test_df['Buyer_Name'] = updated_buyer_names
+
+        # Drop helper
+        test_df.drop(columns=['Buyer_Name_Lower'], inplace=True)
+        master_df.drop(columns=['Master_Name_Lower'], inplace=True)
+
+        st.subheader("Updated Dataset")
+        st.dataframe(test_df)
+
+        # Download updated test data
+        st.download_button("Download Updated Dataset", test_df.to_csv(index=False), file_name="updated_test_data.csv", mime='text/csv')
