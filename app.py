@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from fuzzywuzzy import process, fuzz
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 st.title("Testing Name Match logic")
 
@@ -24,6 +26,10 @@ if master_file and test_file:
         master_df['Master_Name_Lower'] = master_df['Master_Name'].str.lower().str.strip()
         test_df['Buyer_Name_Lower'] = test_df['Buyer_Name'].str.lower().str.strip()
 
+        all_names = master_df['Master_Name_Lower'].tolist()
+        vectorizer = TfidfVectorizer().fit(all_names + test_df['Buyer_Name_Lower'].tolist())
+        tfidf_master = vectorizer.transform(all_names)
+
         buyer_codes = []
         updated_buyer_names = []
 
@@ -37,15 +43,19 @@ if master_file and test_file:
                 updated_buyer_names.append(matched_row['Master_Name'])  # Optional: unify names
             else:
                 # Fuzzy match
-                master_names = master_df['Master_Name_Lower'].tolist()
-                matches = process.extract(buyer_name, master_names, scorer=fuzz.partial_ratio, limit=5)
+                tfidf_buyer = vectorizer.transform([buyer_name])
+                cosine_scores = cosine_similarity(tfidf_buyer, tfidf_master).flatten()
+                top_indices = cosine_scores.argsort()[-5:][::-1]
+                top_matches = [(master_df.iloc[idx]['Master_Name'], cosine_scores[idx]) for idx in top_indices]
 
-                # Get readable match names
-                match_display = [master_df.loc[master_df['Master_Name_Lower'] == m[0], 'Master_Name'].values[0] for m in matches]
+                match_options = [f"{name} (score: {score:.2f})" for name, score in top_matches]
 
-                selected = st.selectbox(f"Select closest match for '{test_df['Buyer_Name'].iloc[i]}'", match_display, key=i)
+                st.markdown(f"**Buyer Name:** {test_df['Buyer_Name'].iloc[i]}")
+                selected = st.selectbox("Select the best match", match_options, key=i)
 
-                selected_row = master_df.loc[master_df['Master_Name'] == selected].iloc[0]
+                selected_name = selected.split(" (score")[0]
+                selected_row = master_df[master_df['Master_Name'] == selected_name].iloc[0]
+
                 buyer_codes.append(selected_row['Master_Code'])
                 updated_buyer_names.append(selected_row['Master_Name'])  
 
