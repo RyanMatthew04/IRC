@@ -1,0 +1,6 @@
+Faker==37.1.0
+fuzzywuzzy==0.18.0
+pandas==2.2.3
+RapidFuzz==3.13.0
+streamlit==1.45.1
+
