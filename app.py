@@ -53,6 +53,17 @@ if master_file and test_file:
                 updated_buyer_names.append(matched_row['Master_Name'])
             
             else:
+                from itertools import permutations
+                import re
+
+                # Function to clean company suffixes (for Jaccard only)
+                def clean_company_name_for_jaccard(name):
+                    suffixes = r"\b(incorporated|inc|llc|ltd|limited|corp|corporation|plc|co|company|pvt|private)\b"
+                    name = name.lower()
+                    name = re.sub(suffixes, '', name)
+                    name = re.sub(r'\s+', ' ', name)  
+                    return name.strip()
+
                 def permuted_winkler_distance(a, b):
                     """
                     Computes a distance = 1 - max Jaro-Winkler similarity over all token permutations of `a`.
@@ -67,33 +78,99 @@ if master_file and test_file:
                             max_sim = sim
                     return 1.0 - max_sim
 
-                distances = master_df['Master_Name_Clean'].apply(
+                def jaccard_distance(a, b):
+                    """
+                    Computes Jaccard distance after cleaning common company suffixes.
+                    """
+                    a_clean = clean_company_name_for_jaccard(a)
+                    b_clean = clean_company_name_for_jaccard(b)
+
+                    set_a = set(a_clean.split())
+                    set_b = set(b_clean.split())
+                    intersection = set_a & set_b
+                    union = set_a | set_b
+                    if not union:
+                        return 1.0
+                    return 1.0 - len(intersection) / len(union)
+
+                # Compute distances using both methods
+                winkler_distances = master_df['Master_Name_Clean'].apply(
                     lambda master_clean: permuted_winkler_distance(test_name_clean, master_clean)
                 )
+                jaccard_distances = master_df['Master_Name_Clean'].apply(
+                    lambda master_clean: jaccard_distance(test_name_clean, master_clean)
+                )
 
-                top_indices = distances.nsmallest(10).index
-                top_matches = [
-                    (master_df.loc[idx, 'Master_Name'], distances[idx]) 
-                    for idx in top_indices
-                ]
+                # Get top 5 from each method
+                top_winkler_indices = winkler_distances.nsmallest(10).index
+                top_jaccard_indices = jaccard_distances.nsmallest(10).index
 
+                # Combine results with method label
+                top_matches = []
+
+                # Zip the two lists and interleave them
+                for winkler_idx, jaccard_idx in zip(top_winkler_indices, top_jaccard_indices):
+                    top_matches.append((
+                        master_df.loc[winkler_idx, 'Master_Name'],
+                        winkler_distances[winkler_idx],
+                        'Permuted Winkler'
+                    ))
+                    top_matches.append((
+                        master_df.loc[jaccard_idx, 'Master_Name'],
+                        jaccard_distances[jaccard_idx],
+                        'Jaccard'
+                    ))
+
+                # If one list is longer, add remaining entries
+                longer_winkler = top_winkler_indices[len(top_jaccard_indices):]
+                longer_jaccard = top_jaccard_indices[len(top_winkler_indices):]
+
+                for idx in longer_winkler:
+                    top_matches.append((
+                        master_df.loc[idx, 'Master_Name'],
+                        winkler_distances[idx],
+                        'Permuted Winkler'
+                    ))
+
+                for idx in longer_jaccard:
+                    top_matches.append((
+                        master_df.loc[idx, 'Master_Name'],
+                        jaccard_distances[idx],
+                        'Jaccard'
+                    ))
+
+
+                unique_matches = {}
+                for name, dist, method in top_matches:
+                    if name not in unique_matches:
+                        unique_matches[name] = (dist, method)
+
+                # Convert back to list of tuples
+                deduped_matches = [(name, dist, method) for name, (dist, method) in unique_matches.items()][:10]
+
+
+                # Create dropdown options
                 match_options = [
-                    f"{name} (distance: {dist:.3f})" 
-                    for name, dist in top_matches
+                    f"{name}"
+                    for name, dist, method in deduped_matches
                 ]
+
 
                 st.markdown(f"**Buyer Name:** {original_name}")
                 selected = st.selectbox(
                     "Select the best match", 
                     match_options, 
-                    key=f"permuted_winkler_{i}"
+                    key=f"combined_match_{i}"
                 )
 
+                # Extract selected name
                 selected_name = selected.split(" (distance")[0]
                 selected_row = master_df[master_df['Master_Name'] == selected_name].iloc[0]
 
                 buyer_codes.append(selected_row['Master_Code'])
                 updated_buyer_names.append(selected_row['Master_Name'])
+
+
                 
     
         # Insert Buyer_Code column before Buyer_Name
